@@ -1,0 +1,60 @@
+# ── WizCodes Lead Finder (Agent 4) — dependencies ──
+# Runtime: Python 3.11. Deployed on Modal. ONE requirements file for local dev,
+# CI and the Modal image.
+
+# ── Shared library ──
+# During build-out:  pip install -e ../wizcore
+# Modal image:       .add_local_python_source("wizcore")
+# Promote later to:  wizcore @ git+https://github.com/dkcodes121617/wizcore@v0.1.0
+
+# ── LangGraph ──
+# This agent has no interrupt() — it never pauses, because it never asks
+# permission for anything. It runs as a graph anyway, and that earns its keep
+# on three counts:
+#   1. Per-node RetryPolicy. Seven sources with seven different failure modes
+#      and backoffs is precisely what per-node retry config is for.
+#   2. Durable partial progress. If Reddit succeeds and the classifier dies,
+#      the checkpoint means the next run does not re-pay for those reads.
+#   3. One observability surface across all three agents rather than two plus
+#      a special case.
+# Pinned to the 1.x major, verified installed: langgraph 1.2.10 /
+# langgraph-checkpoint-postgres 3.1.1. In 1.x, RetryPolicy and CachePolicy come
+# from `langgraph.types`, not `langgraph.pregel`.
+langgraph>=1.2,<2
+langchain-core>=0.3.30
+langgraph-checkpoint-postgres>=3.1,<4
+psycopg[binary,pool]>=3.2.0
+
+# Concurrent source fetches. Seven sources hit in parallel means a slow one
+# costs latency, not the run — and one dead source must never delay the others.
+httpx[http2]>=0.28.0
+
+# ── Classification ──
+# Groq, not the Claude proxy, is the default here: this is the one high-volume,
+# low-stakes LLM job in the whole system (hundreds of candidates per day, a
+# yes/no plus a service-line label). Groq's free tier covers it, the proxy is
+# rate-limited and latency-spiky, and spending proxy budget on triage starves
+# the jobs where wording actually matters. The proxy stays available as the
+# fallback and for the reply-angle draft on high-confidence leads only.
+groq>=0.13.0
+requests>=2.32.0
+
+# ── Reddit fallback reader (ARCHITECTURE.md §4.1) ──
+# The live path is redditapis.com over plain HTTP. PRAW is here so the
+# OfficialPRAWReader swap is a config change, not a build-under-pressure.
+# READ METHODS ONLY — see tools/no_write_endpoints.py, which fails CI if a
+# write, vote or DM endpoint path ever appears in this repo.
+praw>=7.8.0
+
+# Registrable-domain extraction: the basis of entity_key, which is what stops
+# the same business being pitched from two different sources.
+# NOTE: bundle the suffix list (TLDEXTRACT_CACHE / suffix_list_urls=()) so a
+# container start never depends on a live fetch of the public suffix list.
+tldextract>=5.1.0
+
+python-dotenv>=1.0.1
+tenacity>=9.0.0
+
+# ── Deploy + lint tooling ──
+modal>=0.73.82
+ruff>=0.8.0

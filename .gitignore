@@ -1,0 +1,19 @@
+# Secrets. `.env.example` is the tracked template — never the real file.
+.env
+.env.*
+!.env.example
+
+# Local-only
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+*.log
+
+# Run output: candidate dumps, digests.
+output/
+
+# Cached clone of the site repo used for grounding.
+site_repo/
+.cache/

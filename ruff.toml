@@ -1,0 +1,25 @@
+# Lint rules for THIS agent. Self-contained, like everything else in this folder.
+#
+# Pinned explicitly rather than relying on ruff's defaults: the default rule set
+# changes between ruff releases, and a scheduled agent nobody is watching should
+# not start failing CI because a linter shipped a new check on a Tuesday.
+#
+# Matches wizcore's selection so the shared library and its callers are held to
+# one standard, plus SIM/DTZ/RUF, which caught real things here: a naive
+# datetime, and an unparenthesised implicit string concat inside a list literal
+# (the shape a missing comma takes when it silently merges two elements).
+line-length = 100
+target-version = "py311"
+exclude = [".venv", "__pycache__", "output", "site_repo"]
+
+[lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "DTZ", "RUF", "ISC"]
+ignore = [
+    "E501",    # line length is handled by the formatter, not by failing a build
+    "B008",    # dataclass field(default_factory=...) reads fine as a call in a default
+    "RUF012",  # ClassVar annotations on mutable class attrs add noise here
+]
+
+[lint.per-file-ignores]
+# This file has to contain every banned endpoint pattern it searches for.
+"tools/no_write_endpoints.py" = ["RUF001", "RUF002"]
