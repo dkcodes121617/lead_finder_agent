@@ -25,6 +25,8 @@ cost zero database.
 """
 from __future__ import annotations
 
+from datetime import UTC
+
 import modal
 
 app = modal.App("wizcodes-leadfind")
@@ -60,6 +62,44 @@ secret = modal.Secret.from_name("wizcodes-leadfind")
     retries=0,   # the graph does its own per-node retry, tuned per dependency
 )
 def scheduled() -> dict:
+    """The only cron here. Runs the pipeline, and at 02:30 UTC also the digest.
+
+    Consolidated because Modal's plan allows 5 scheduled functions per
+    workspace. The digest is isolated in its own `try`: a Telegram failure at
+    08:00 IST must not stop the lead run it is reporting on.
+    """
+    from datetime import datetime
+
+    now = datetime.now(UTC)
+    out = _run_pipeline()
+    if (now.hour, now.minute) == (2, 30):
+        try:
+            out["digest"] = _digest()
+        except Exception as e:
+            out["digest"] = f"failed: {type(e).__name__}"
+            _alert_step("digest", e)
+    return out
+
+
+def _alert_step(name: str, exc: BaseException) -> None:
+    import contextlib
+    import logging
+
+    from wizcore.telegram.send import alert
+
+    logging.getLogger("lead_finder.modal").exception("scheduled step %s failed", name)
+    with contextlib.suppress(Exception):
+        alert("lead_finder", exc, context=f"scheduled step: {name}")
+
+
+def _digest() -> dict:
+    from config import CONFIG
+    from pipeline.digest import send_digest
+
+    return {"sent": send_digest(CONFIG)}
+
+
+def _run_pipeline() -> dict:
     from main import run_once
 
     return run_once()
@@ -68,8 +108,9 @@ def scheduled() -> dict:
 @app.function(
     image=image,
     secrets=[secret],
-    # 08:00 IST = 02:30 UTC. Modal's scheduler is UTC.
-    schedule=modal.Cron("30 2 * * *"),
+    # No cron of its own. Modal allows 5 scheduled functions per workspace and
+    # the three agents wanted ten between them, so `scheduled()` dispatches this
+    # at 02:30 UTC (08:00 IST). Still callable directly with `modal run`.
     timeout=300,
     retries=1,
 )
@@ -82,10 +123,7 @@ def digest() -> dict:
     hand-over nobody posted — because those are the only things worth a daily
     interruption.
     """
-    from config import CONFIG
-    from pipeline.digest import send_digest
-
-    return {"sent": send_digest(CONFIG)}
+    return _digest()
 
 
 @app.function(image=image, secrets=[secret], timeout=900)
