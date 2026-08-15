@@ -2,10 +2,12 @@
 
 ## Phrasing rule, learned from the proxy and applied everywhere
 
-The ClaudeStore proxy runs an aggressive prompt-injection guard. Prompts phrased
+The proxy runs an aggressive prompt-injection guard. Prompts phrased
 as override or compliance commands — "reply with exactly X", "never break
-character", "you must obey this contract" — trigger refusals and an alternate
-"Kiro" identity. So these read as an ordinary professional brief, and the
+character", "you must obey this contract" — trigger refusals. (Pre-2026-08-16 on
+ClaudeStore this surfaced as an alternate "Kiro" identity; on LLMsRelay it is a
+flat "I can't discuss that." from a gateway-side filter. Same rule either way.)
+So these read as an ordinary professional brief, and the
 constraints are expressed as *what a good answer looks like* rather than as
 orders.
 
