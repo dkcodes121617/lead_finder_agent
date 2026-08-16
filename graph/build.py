@@ -93,7 +93,10 @@ def build_graph(config, budget, checkpointer=None):
     graph.add_node("preflight", make_preflight(config))
     graph.add_edge(START, "preflight")
 
-    active = config.active_sources()
+    # Due, not merely active: metered vendors poll on their own interval so a
+    # 30-minute tick does not mean 576 Reddit calls a day. See
+    # config.source_intervals().
+    active = config.due_sources()
     if "inbound" in active:
         active = ["inbound"] + [s for s in active if s != "inbound"]
 

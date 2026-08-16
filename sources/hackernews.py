@@ -33,7 +33,7 @@ class HackerNewsSource(LeadSource):
         # Overlap the window deliberately. A lookback exactly equal to the cron
         # interval loses anything posted during the seconds a run takes, and the
         # unique constraint makes the overlap free.
-        since = int(time.time()) - (self.config.lookback_minutes + 15) * 60
+        since = int(time.time()) - self.config.lookback_for("hackernews") * 60
 
         candidates: list[Candidate] = []
         calls = 0

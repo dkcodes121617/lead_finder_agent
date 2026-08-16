@@ -143,6 +143,61 @@ class Config:
             if s in SOURCE_REQUIREMENTS and s not in paused
         ]
 
+    # How often each source is worth polling, in minutes. Everything absent runs
+    # on every tick.
+    #
+    # The agent ticks every 30 minutes, and at that rate the metered vendors add
+    # up fast: 576 Reddit calls a day across 12 subreddits, 240 Twitter searches
+    # across 5 queries. Almost all of it buys nothing. A Reddit post two hours
+    # old is still a fresh lead; a dentist in Austin does not open and close
+    # within twelve hours. Discovery is not a feed and does not need feed cadence.
+    #
+    # Free sources stay on every tick because their only cost is a few seconds
+    # of container time we are paying for anyway.
+    SOURCE_INTERVALS_DEFAULT = "twitter:180,reddit:120,places:720,osm:360,stackexchange:180"
+
+    def source_intervals(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        raw = env_str("SOURCE_INTERVAL_MINUTES", self.SOURCE_INTERVALS_DEFAULT)
+        for entry in raw.split(","):
+            name, _, mins = entry.partition(":")
+            if name.strip() and mins.strip().isdigit():
+                out[name.strip()] = int(mins.strip())
+        return out
+
+    def due_sources(self, now=None) -> list[str]:
+        """Active sources that are due to poll on this tick.
+
+        Derived from the clock rather than from a last-polled timestamp, so it
+        needs no state and no database read: a source with a 180-minute interval
+        runs in the first half-hour of every third hour. Two containers on
+        different machines agree without coordinating.
+
+        `inbound` and `hackernews` carry no interval and so run every tick — the
+        first is our own database and the second is free and unauthenticated.
+        """
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        now = now or datetime.now(ZoneInfo(self.display_tz))
+        intervals = self.source_intervals()
+        since_midnight = now.hour * 60 + now.minute
+        return [
+            s for s in self.active_sources()
+            if since_midnight % intervals.get(s, 30) < 30
+        ]
+
+    def lookback_for(self, source: str) -> int:
+        """Minutes of history a source should ask for.
+
+        Tied to its polling interval, because the two are the same number seen
+        from different ends. A source polled every three hours that only kept
+        posts from the last forty-five minutes would discard five sixths of what
+        it fetched — paying the full API cost for a fraction of the leads, which
+        is the opposite of the point.
+        """
+        return max(self.lookback_minutes, self.source_intervals().get(source, 0) + 15)
+
     def paused_sources(self, today=None) -> set[str]:
         """Sources on hold, from `SOURCES_PAUSED_UNTIL=reddit:2026-08-26`.
 

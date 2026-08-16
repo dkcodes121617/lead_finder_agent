@@ -32,7 +32,7 @@ class StackExchangeSource(LeadSource):
     def fetch(self, cursor: str = "") -> SourceResult:
         sites = self.config.stackexchange_sites or ["stackoverflow"]
         tags = self.config.stackexchange_tags
-        since = int(time.time()) - (self.config.lookback_minutes + 15) * 60
+        since = int(time.time()) - self.config.lookback_for("stackexchange") * 60
 
         candidates: list[Candidate] = []
         calls = 0
