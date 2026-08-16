@@ -78,6 +78,22 @@ def scheduled() -> dict:
         except Exception as e:
             out["digest"] = f"failed: {type(e).__name__}"
             _alert_step("digest", e)
+
+    # Once a day, well away from the digest. Neon's free tier stops at 500 MB
+    # and LangGraph checkpoints were two thirds of the database and the only
+    # thing growing without bound — see wizcore.db.retention for what is safe
+    # to delete and what deliberately is not. Isolated: a cleanup that takes
+    # down the lead run it is attached to costs more than the disk it saved.
+    if (now.hour, now.minute) == (3, 30):
+        try:
+            from wizcore.db.retention import prune
+
+            from config import CONFIG
+
+            out["retention"] = prune(CONFIG.database_url)
+        except Exception as e:
+            out["retention"] = f"failed: {type(e).__name__}"
+            _alert_step("retention", e)
     return out
 
 
