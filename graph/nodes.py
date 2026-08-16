@@ -172,6 +172,59 @@ def make_source_node(config, name: str, budget: BudgetGuard, retry: dict):
     return source_node
 
 
+def _fair_share(candidates: list, cap: int) -> list:
+    """Cap the run by taking a turn from each source, not by taking the newest.
+
+    ## The bug this replaces
+
+    The previous version sorted every candidate newest-first and sliced to the
+    cap. Two things made that quietly fatal:
+
+      * **Reddit is a firehose.** It returns hundreds of posts a run, all
+        minutes old, so it occupied the whole of a 300-row cap on its own.
+      * **Businesses have no timestamp.** A Google Places or OpenStreetMap
+        result is a shop, not a post — `posted_at` is None, which sorted to the
+        very bottom. They were cut before the classifier ever saw one.
+
+    Measured against the live database after a week of running: reddit 378
+    leads, hackernews 15, everything else **zero**. Not because those sources
+    were broken — they fetched fine and reported candidates every run — but
+    because the cap ate them. A dead source and a starved source look identical
+    from the outside, which is why this ran for a week unnoticed.
+
+    ## What it does instead
+
+    Round-robin: one candidate from each source in turn until the cap is full.
+    Within a source, newest first, so a source that is genuinely a feed still
+    gives up its stalest rows first. A source with three candidates contributes
+    all three; a source with four hundred waits its turn.
+
+    The result is that the cap now limits *volume* without deciding *variety*,
+    which was never its job.
+    """
+    if len(candidates) <= cap:
+        return candidates
+
+    from collections import defaultdict
+
+    by_source: dict[str, list] = defaultdict(list)
+    for candidate in candidates:
+        by_source[candidate.source].append(candidate)
+    for rows in by_source.values():
+        rows.sort(key=lambda c: c.posted_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+
+    out: list = []
+    queues = list(by_source.values())
+    while len(out) < cap and any(queues):
+        for rows in queues:
+            if not rows:
+                continue
+            out.append(rows.pop(0))
+            if len(out) >= cap:
+                break
+    return out
+
+
 def make_collect(config):
     """Merge the fan-in, dedupe, and cap the run."""
 
@@ -188,10 +241,7 @@ def make_collect(config):
 
         kept, dedupe_counters = dedupe_in_run(candidates)
 
-        # Newest first, so if the cap bites it drops the stalest rows rather
-        # than whichever source happened to finish last.
-        kept.sort(key=lambda c: c.posted_at or datetime.min.replace(tzinfo=UTC), reverse=True)
-        capped = kept[: config.max_candidates_per_run]
+        capped = _fair_share(kept, config.max_candidates_per_run)
 
         counters = {
             "candidates_raw": len(candidates),
