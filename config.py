@@ -146,15 +146,20 @@ class Config:
     # How often each source is worth polling, in minutes. Everything absent runs
     # on every tick.
     #
-    # The agent ticks every 30 minutes, and at that rate the metered vendors add
-    # up fast: 576 Reddit calls a day across 12 subreddits, 240 Twitter searches
-    # across 5 queries. Almost all of it buys nothing. A Reddit post two hours
-    # old is still a fresh lead; a dentist in Austin does not open and close
-    # within twelve hours. Discovery is not a feed and does not need feed cadence.
+    # ONLY the two vendors that charge per call. redditapis and twitterapis bill
+    # per read, and at a 30-minute tick that was 576 Reddit calls a day across
+    # 12 subreddits and 240 Twitter searches across 5 queries. Almost none of it
+    # bought anything: a Reddit post two hours old is still a fresh lead.
     #
-    # Free sources stay on every tick because their only cost is a few seconds
-    # of container time we are paying for anyway.
-    SOURCE_INTERVALS_DEFAULT = "twitter:180,reddit:120,places:720,osm:360,stackexchange:180"
+    # Everything else runs on every tick and should. Places, OSM, Stack Exchange
+    # and Hacker News cost nothing per call, and throttling a free source only
+    # trades freshness for a saving that does not exist.
+    #
+    # (OSM is the one to watch rather than throttle: it returns HTTP 504 under
+    # load, which is Overpass shedding traffic. If those persist the answer is a
+    # second mirror, not a longer interval — a slower poll would still 504, just
+    # less often.)
+    SOURCE_INTERVALS_DEFAULT = "twitter:180,reddit:120"
 
     def source_intervals(self) -> dict[str, int]:
         out: dict[str, int] = {}
