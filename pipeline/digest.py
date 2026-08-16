@@ -225,6 +225,12 @@ def send_digest(config) -> bool:
     """Build and send. Never raises — a digest is reporting, not work."""
     try:
         body = build(config)
+        # A paused source produces no leads, which looks exactly like a broken
+        # one in every count below. Saying so is the difference between "we
+        # turned that off on purpose" and a fortnight of quiet debugging.
+        note = config.pause_note()
+        if note:
+            body += "\n\n⏸ <b>Paused</b>\n  " + note
     except Exception:
         log.error("could not build digest", exc_info=True)
         return False

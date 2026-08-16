@@ -136,8 +136,56 @@ class Config:
     http_timeout: int = env_int("HTTP_TIMEOUT", 25)
 
     def active_sources(self) -> list[str]:
-        """Enabled sources, filtered to ones this system knows about."""
-        return [s for s in self.sources_enabled if s in SOURCE_REQUIREMENTS]
+        """Enabled sources, minus any that are paused, filtered to known ones."""
+        paused = self.paused_sources()
+        return [
+            s for s in self.sources_enabled
+            if s in SOURCE_REQUIREMENTS and s not in paused
+        ]
+
+    def paused_sources(self, today=None) -> set[str]:
+        """Sources on hold, from `SOURCES_PAUSED_UNTIL=reddit:2026-08-26`.
+
+        A **date**, not a switch, and that is the whole design. A Reddit account
+        under thirty days old has its comments auto-removed, so collecting those
+        leads only fills a queue nobody can act on — but a pause somebody has to
+        remember to lift is a source that stays off for a year. This one expires
+        on its own and the agent resumes with no deploy and no edit.
+
+        An unparseable entry is ignored rather than treated as an indefinite
+        pause: a typo must not silently switch a source off forever.
+        """
+        from datetime import date, datetime
+        from zoneinfo import ZoneInfo
+
+        raw = env_str("SOURCES_PAUSED_UNTIL")
+        if not raw:
+            return set()
+        today = today or datetime.now(ZoneInfo(self.display_tz)).date()
+        out: set[str] = set()
+        for entry in raw.split(","):
+            name, _, until = entry.partition(":")
+            name, until = name.strip(), until.strip()
+            if not name or not until:
+                continue
+            try:
+                if today < date.fromisoformat(until):
+                    out.add(name)
+            except ValueError:
+                continue
+        return out
+
+    def pause_note(self, today=None) -> str:
+        """One line for the digest, so a paused source is never mistaken for a dead one."""
+        paused = self.paused_sources(today)
+        if not paused:
+            return ""
+        raw = env_str("SOURCES_PAUSED_UNTIL")
+        whens = dict(
+            (e.split(":", 1)[0].strip(), e.split(":", 1)[1].strip())
+            for e in raw.split(",") if ":" in e
+        )
+        return " · ".join(f"{s} paused until {whens.get(s, '?')}" for s in sorted(paused))
 
     def unknown_sources(self) -> list[str]:
         return [s for s in self.sources_enabled if s not in SOURCE_REQUIREMENTS]
