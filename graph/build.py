@@ -156,6 +156,22 @@ def make_checkpointer(config):
             autocommit=True,
             prepare_threshold=0,      # PostgresSaver's own requirement
             options=f"-c search_path={schema},public",
+            # This one connection is held open for the whole graph run, and the
+            # classify node can sit for minutes between writes while it waits on
+            # the model. Neon drops an idle connection in that window, so the
+            # next put_writes died with "SSL connection has been closed
+            # unexpectedly" and took the run with it.
+            #
+            # Keepalives make the socket prove it is alive every 30s instead of
+            # discovering it is dead at the next write. The timeouts are short
+            # because failing fast is the point: a dead connection should raise
+            # while there is still time to finish the run, not hang until Modal
+            # cancels the container at the 15-minute timeout.
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=3,
+            connect_timeout=10,
         )
         saver = PostgresSaver(conn)
         saver.setup()

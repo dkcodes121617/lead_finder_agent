@@ -31,7 +31,7 @@ from wizcore.facts.snapshot import build_snapshot
 from wizcore.obs.log import log_event
 from wizcore.telegram.send import esc, send
 
-from pipeline.dedupe import dedupe_in_run
+from pipeline.dedupe import dedupe_in_run, drop_already_known
 from pipeline.notify import notify_leads, notify_run_summary
 from pipeline.persist import muted_sources, persist, record_cursors
 from scoring.classify import Classifier, verdicts_summary
@@ -241,6 +241,11 @@ def make_collect(config):
 
         kept, dedupe_counters = dedupe_in_run(candidates)
 
+        # Before the cap, not after: a duplicate that survives to the cap has
+        # taken a slot a new candidate needed. This is also what keeps the
+        # classifier off work the database has already answered.
+        kept, known_counters = drop_already_known(config, kept)
+
         capped = _fair_share(kept, config.max_candidates_per_run)
 
         counters = {
@@ -248,6 +253,7 @@ def make_collect(config):
             "candidates": len(capped),
             "dropped_by_cap": len(kept) - len(capped),
             **dedupe_counters,
+            **known_counters,
             "sources_ok": sum(1 for r in results if r.ok),
             "sources_failed": sum(1 for r in results if not r.ok),
             **trend_counters,

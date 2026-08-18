@@ -87,3 +87,50 @@ def _richness(candidate) -> int:
     if candidate.body:
         score += 1
     return score
+
+
+def drop_already_known(config, candidates: list) -> tuple[list, dict]:
+    """Drop candidates already in `core.leads`, BEFORE anything pays to judge them.
+
+    Layer 1 in the module docstring — `UNIQUE (source, source_uid)` — was doing
+    its job, but at the wrong end of the pipeline. The graph runs
+    collect → classify → persist, so the database only got a say at persist,
+    after the classifier had already been paid.
+
+    In production that meant every 30-minute tick sent ~240 candidates to the
+    model, spent roughly 50 Haiku calls judging them, and then discarded all of
+    them at persist as duplicates. Three separate costs for zero new leads:
+
+      - the LLM bill, on candidates whose verdict is already in the database
+      - the wall clock, which pushed runs from ~4 minutes past the 15-minute
+        Modal timeout and killed 12 consecutive runs
+      - the per-run cap, which filled with duplicates and starved genuinely
+        new candidates out of the run entirely
+
+    One SELECT replaces all of it. Failure is non-fatal on purpose: if the
+    database cannot be reached the run continues with everything, which is
+    merely expensive, rather than stopping, which finds nothing.
+    """
+    if not candidates:
+        return candidates, {"dup_known": 0}
+
+    from wizcore.db.conn import connect, fetch_all
+
+    try:
+        sources = [c.source for c in candidates]
+        uids = [c.source_uid for c in candidates]
+        with connect(config.database_url, autocommit=True) as conn:
+            rows = fetch_all(
+                conn,
+                "SELECT source, source_uid FROM core.leads "
+                "WHERE (source, source_uid) IN "
+                "      (SELECT * FROM unnest(%s::text[], %s::text[]))",
+                (sources, uids),
+            )
+    except Exception:  # noqa: BLE001
+        log.warning("could not pre-check known candidates; classifying all", exc_info=True)
+        return candidates, {"dup_known": 0}
+
+    known = {(r["source"], r["source_uid"]) for r in rows}
+    kept = [c for c in candidates if (c.source, c.source_uid) not in known]
+    return kept, {"dup_known": len(candidates) - len(kept)}
