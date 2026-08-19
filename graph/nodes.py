@@ -130,6 +130,11 @@ def make_source_node(config, name: str, budget: BudgetGuard, retry: dict):
     factor = float(retry.get("backoff_factor", 2.0))
 
     def source_node(state):
+        started = time.monotonic()
+
+        def out_of_time() -> bool:
+            return time.monotonic() - started > config.source_deadline_seconds
+
         if name in (state.get("muted_sources") or []):
             return {
                 "source_results": [
@@ -151,6 +156,27 @@ def make_source_node(config, name: str, budget: BudgetGuard, retry: dict):
                 log.warning("source %s raised on attempt %d", name, attempt, exc_info=True)
 
             if result.ok or attempt == attempts or not is_transient(result.error):
+                break
+
+            # The budget, not just the attempt count.
+            #
+            # "One dead vendor must never take a run to zero" held for a source
+            # that FAILS. It did not hold for one that merely hangs: Overpass
+            # went unreachable and each of its three queries sat on a 90s HTTP
+            # timeout, three attempts deep. The node returned ok=False exactly
+            # as designed — 15 minutes later, by which point Modal had already
+            # cancelled the container at its 900s limit and the run was lost.
+            # Every other source had finished in 16 seconds.
+            #
+            # So a source now gets a wall-clock budget as well as a retry count,
+            # and giving up inside it is what keeps the other sources' work.
+            if out_of_time():
+                result = SourceResult.failed(
+                    name,
+                    f"gave up after {config.source_deadline_seconds}s "
+                    f"(attempt {attempt}/{attempts}): {result.error[:120]}",
+                )
+                log.warning("source %s exceeded its time budget", name)
                 break
 
             wait = interval * (factor ** (attempt - 1))

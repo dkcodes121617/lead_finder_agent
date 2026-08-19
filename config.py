@@ -59,6 +59,18 @@ class Config:
     # ── sources ──
     sources_enabled: list[str] = field(default_factory=lambda: env_list("SOURCES_ENABLED", "inbound,hackernews"))
     max_candidates_per_run: int = env_int("MAX_CANDIDATES_PER_RUN", 300)
+
+    #: Wall-clock budget for ONE source, across all of its retries.
+    #:
+    #: Sized against the 900s Modal timeout with room for classify and persist
+    #: after it. Sources run concurrently, so this bounds the whole fetch phase,
+    #: not the sum of them.
+    #:
+    #: 240s because Overpass went unreachable and burned the entire run: three
+    #: queries, each on a 90s HTTP timeout, three attempts deep, 15 minutes
+    #: total, while every other source finished in 16 seconds. Retry counts
+    #: alone cannot bound a dependency that hangs rather than fails.
+    source_deadline_seconds: int = env_int("SOURCE_DEADLINE_SECONDS", 240)
     lookback_minutes: int = env_int("LOOKBACK_MINUTES", 45)
 
     # reddit
