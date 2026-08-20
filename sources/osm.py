@@ -95,6 +95,20 @@ class OsmSource(LeadSource):
         candidates: list[Candidate] = []
         calls = 0
         errors: list[str] = []
+        # A wall-clock budget for the WHOLE source, checked before every query
+        # and every retry.
+        #
+        # The node-level budget could not catch this: three queries, each with
+        # three internal attempts on a 90s timeout, all happen inside this one
+        # fetch() call, so the node only gets to look once it has already
+        # returned. Overpass went unreachable and this burned 913 seconds while
+        # every other source finished in nine — and Modal cancelled the
+        # container at 900s, losing their work along with it.
+        deadline = time.monotonic() + getattr(self.config, "source_deadline_seconds", 240)
+
+        def spent() -> bool:
+            return time.monotonic() >= deadline
+
         try:
             # Overpass is a shared free service that can be slow under load, and
             # being rude to it is how an IP gets blocked. One request per query,
@@ -111,12 +125,25 @@ class OsmSource(LeadSource):
                     # back got three of them refused. A couple of seconds of
                     # politeness costs nothing on a 30-minute schedule and is
                     # the difference between five results and two.
+                    if spent():
+                        errors.append(
+                            f"stopped after {int(time.monotonic() - (deadline - getattr(self.config, 'source_deadline_seconds', 240)))}s "
+                            f"({len(queries) - position} quer(ies) not attempted)"
+                        )
+                        break
                     if position:
                         time.sleep(_QUERY_GAP_SECONDS)
                     try:
-                        resp, used = _post_with_retry(
-                            client, self.config.overpass_url, _ql(key, value, area)
-                        )
+                        resp, used = None, 0
+                        for endpoint in _endpoints(self.config.overpass_url):
+                            resp, spent_calls = _post_with_retry(
+                                client, endpoint, _ql(key, value, area), deadline=deadline
+                            )
+                            used += spent_calls
+                            if resp is not None and resp.status_code == 200:
+                                break
+                            if spent():
+                                break
                         calls += used
                         if resp is None or resp.status_code != 200:
                             code = resp.status_code if resp is not None else "no response"
@@ -139,7 +166,29 @@ class OsmSource(LeadSource):
         )
 
 
-def _post_with_retry(client, url: str, body: str, attempts: int = 3):
+#: Overpass mirrors, tried in order.
+#:
+#: The main instance went unreachable from Modal for a quarter of an hour at a
+#: time — Errno 101, not a 5xx — and OSM is the source that finds businesses
+#: WITH a website, which is precisely what email outreach has none of. Losing it
+#: is not "one source down", it is the contactable half of the pipeline.
+#:
+#: kumi.systems is a well-known public mirror of the same API and query
+#: language, so failing over needs no second code path.
+MIRRORS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+)
+
+
+def _endpoints(configured: str) -> list[str]:
+    """The configured endpoint first, then any mirror not equal to it."""
+    out = [configured] if configured else []
+    out += [m for m in MIRRORS if m != configured]
+    return out
+
+
+def _post_with_retry(client, url: str, body: str, attempts: int = 3, deadline: float | None = None):
     """POST one Overpass query, retrying its own rate limiting.
 
     Retried here rather than at the node, because the failure is **per query**:
@@ -152,7 +201,19 @@ def _post_with_retry(client, url: str, body: str, attempts: int = 3):
     """
     response = None
     for attempt in range(1, attempts + 1):
-        response = client.post(url, data={"data": body})
+        # Never start an attempt the budget cannot pay for. Retrying an
+        # unreachable host three times is three full timeouts for the same
+        # answer.
+        if deadline is not None and time.monotonic() >= deadline:
+            return response, attempt - 1
+        try:
+            response = client.post(url, data={"data": body})
+        except Exception:
+            # Unreachable host, DNS failure, reset connection. Returning rather
+            # than raising is what lets the caller try the next mirror; raising
+            # here aborted the whole query and the mirror was never reached.
+            log.warning("overpass %s unreachable on attempt %d", url, attempt, exc_info=True)
+            return None, attempt
         if response.status_code not in (429, 502, 503, 504):
             return response, attempt
         if attempt < attempts:
