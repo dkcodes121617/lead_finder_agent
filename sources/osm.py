@@ -291,6 +291,11 @@ def _to_candidate(element: dict, query: str, area: str) -> Candidate | None:
         identity_url=website,
         email=str(tags.get("email") or tags.get("contact:email") or "").strip(),
         industry=category,
+        # Qualified by the weakness assessment in the Outreach agent, not by the
+        # intent classifier — a directory listing states no hiring intent and was
+        # therefore rejected 153 times out of 153. See sources/places.py for the
+        # full reasoning; this is the same case.
+        presumed_lead=True,
         raw={
             "query": query,
             "osm_id": osm_id,

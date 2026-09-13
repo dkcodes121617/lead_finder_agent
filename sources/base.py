@@ -78,6 +78,23 @@ class Candidate:
     # needing logic anywhere.
     seed_score: int | None = None
     # Set when a source already knows this is a lead and no LLM call is needed.
+    #: Skip the intent classifier — something else is the right judge of this one.
+    #:
+    #: Two kinds of candidate qualify, for opposite reasons:
+    #:
+    #:   inbound       already told us what they want, so there is no intent left
+    #:                 to infer. Scoring it would be asking a model whether
+    #:                 someone who filled in the contact form is interested.
+    #:   places / osm  state no intent at all, because a directory listing never
+    #:                 does. These are qualified downstream by the Outreach
+    #:                 agent's PageSpeed + fingerprint weakness assessment, which
+    #:                 is what `seed_score=None` on those sources already meant by
+    #:                 "it has to earn its score from the assessment".
+    #:
+    #: It does NOT mean "a good lead" — it means the intent score is not the gate.
+    #: A presumed lead carries no intent_score, so it sorts last in
+    #: `core.claim_leads()` and sits below NOTIFY_MIN_SCORE: it can never displace
+    #: or interrupt a lead that did state intent.
     presumed_lead: bool = False
     raw: dict = field(default_factory=dict)
 
@@ -104,10 +121,27 @@ class SourceResult:
     ok: bool = True
     error: str = ""
     calls_made: int = 0
+    #: This source was never attempted — muted, paused or out of budget.
+    #:
+    #: Distinct from ok/failed, and the distinction is load-bearing. A muted
+    #: source used to be reported as `ok=True`, which `record_cursors` then wrote
+    #: back as a success and which RESET `fail_streak` to zero. The mute is keyed
+    #: on that streak, so muting a source immediately un-muted it: the streak
+    #: cleared, the next run tried the dead source again, and it took five more
+    #: failures to re-mute. Reddit, Places and Twitter all oscillated that way for
+    #: weeks while their cursor row read `last_ok = true`.
+    #:
+    #: A skipped result now carries no verdict at all, so its stored state is left
+    #: exactly as the last real attempt left it.
+    skipped: bool = False
 
     @classmethod
     def failed(cls, source: str, error: str) -> SourceResult:
         return cls(source=source, ok=False, error=error[:500])
+
+    @classmethod
+    def muted(cls, source: str, reason: str = "muted after repeated failures") -> SourceResult:
+        return cls(source=source, ok=True, skipped=True, error=f"skipped: {reason}")
 
 
 class LeadSource(ABC):

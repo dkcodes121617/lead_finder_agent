@@ -32,32 +32,58 @@ def notify_leads(config, rows: list[dict]) -> int:
     worth_it.sort(key=lambda r: r.get("intent_score") or 0, reverse=True)
     shown = worth_it[: config.notify_max_per_run]
 
-    header = (
-        f"🎯 <b>{len(worth_it)} new lead{'s' if len(worth_it) != 1 else ''}</b>"
-        f" (score ≥ {config.notify_min_score})"
-    )
-    if len(worth_it) > len(shown):
-        header += f" - showing the top {len(shown)}"
-
-    blocks = [header, ""]
+    # ── One message per lead, not one digest of all of them ──
+    #
+    # A lead alert exists to get a reply written by a human onto a stranger's
+    # thread, on a phone, in the two minutes before the thread goes cold. That
+    # makes the message a TOOL, not a report, and it has to survive being read
+    # with one thumb:
+    #
+    #   * the reply text goes in <pre>, because Telegram renders that as a
+    #     tap-to-copy block on mobile. Italic inline text - what this used to
+    #     send - has to be selected by hand, which on a phone means dragging
+    #     two handles over a paragraph and usually missing the last word.
+    #   * it is NOT truncated any more. The old 400-char clip cut the end off
+    #     the longest angles, which is exactly where the ask lives, so the one
+    #     part you cannot write yourself was the part that got dropped.
+    #   * the link is its own line with a verb on it, not wrapped around the
+    #     post title, so the thing to tap is obvious.
+    #
+    # Digesting several leads into one message undid all of that: chunking split
+    # <pre> blocks across message boundaries, and copying one reply out of five
+    # meant selecting inside a wall of text. Volume is not a concern here the way
+    # it is for run summaries - this fires only above NOTIFY_MIN_SCORE, which is
+    # roughly one message a day, and it is the one message worth opening.
     for row in shown:
         score = row.get("intent_score") or 0
-        title = esc((row.get("title") or "")[:150])
+        title = esc((row.get("title") or "")[:200])
         url = row.get("url") or ""
-        line = f"<b>{score}</b> · {esc(row.get('source', ''))}"
-        if row.get("service_line") and row["service_line"] != "none":
-            line += f" · {esc(row['service_line'])}"
-        if row.get("confidence"):
-            line += f" · {esc(row['confidence'])} confidence"
-        blocks.append(line)
-        blocks.append(f"<a href=\"{esc(url)}\">{title}</a>" if url else title)
-        if row.get("reply_angle"):
-            # The one piece of generated copy this agent produces. Marked as a
-            # suggestion because a human sends it, not the agent.
-            blocks.append(f"<i>angle:</i> {esc(row['reply_angle'][:400])}")
-        blocks.append("")
 
-    send("\n".join(blocks).strip(), topic="leads", dry_run=config.dry_run)
+        meta = f"<b>{score}</b> · {esc(row.get('source', ''))}"
+        if row.get("service_line") and row["service_line"] != "none":
+            meta += f" · {esc(row['service_line'])}"
+        if row.get("confidence"):
+            meta += f" · {esc(row['confidence'])} confidence"
+
+        parts = ["🎯 <b>Lead needs your reply</b>", "", meta, title, ""]
+        if url:
+            parts.append(f'👉 <a href="{esc(url)}">Open the thread and reply</a>')
+            parts.append("")
+        if row.get("reply_angle"):
+            # Written by the agent, sent by a human. Tap and hold to copy.
+            parts.append("<b>Send this:</b>")
+            parts.append(f"<pre>{esc(row['reply_angle'])}</pre>")
+        else:
+            parts.append("<i>No draft reply - read the thread and write one.</i>")
+
+        send("\n".join(parts).strip(), topic="leads", dry_run=config.dry_run)
+
+    if len(worth_it) > len(shown):
+        send(
+            f"…and {len(worth_it) - len(shown)} more lead(s) above "
+            f"score {config.notify_min_score} this run. See the portal.",
+            topic="leads", dry_run=config.dry_run, silent=True,
+        )
 
     lead_ids = [r["lead_id"] for r in worth_it if r.get("lead_id")]
     _mark_notified(config, lead_ids)
@@ -81,40 +107,54 @@ def _mark_notified(config, lead_ids: list[int]) -> None:
 
 
 def notify_run_summary(config, counters: dict, results: list, muted: set[str]) -> None:
-    """The end-of-run line. Sent only when there is something to say.
+    """Speak only when a source CHANGES state. Never on steady state.
 
-    A scheduled agent that reports 'nothing found' every 30 minutes trains you to
-    ignore it, and then you miss the one that mattered. So a quiet, healthy run
-    stays silent and only anomalies speak.
+    The previous version sent whenever anything was failing or muted. This agent
+    runs 48 times a day, and from 26 Aug at least one source failed on every
+    single run, so it sent ~48 messages a day saying the same three things —
+    about 1,400 in three weeks. The cost of that is not noise, it is that the
+    Pinterest-token warning and the site-deploy failure landed in a channel
+    nobody could still read.
+
+    So: a source that starts failing says so once. A source that recovers says so
+    once. A source that has been failing for nineteen days says nothing at all,
+    because there is nothing new for a human to do about it that they were not
+    already told. Steady-state health lives in the portal, which reads the same
+    `leadfind.source_cursors` row this is derived from.
+
+    `prior` is read before `record_cursors` runs, so it still holds the previous
+    attempt's verdict — that ordering is what makes the comparison possible and
+    is why `record_cursors` is called after this in the graph.
     """
-    failures = [r for r in results if not r.ok]
-    degraded = [r for r in results if r.ok and r.error]
-    new_leads = counters.get("leads_inserted", 0)
+    from pipeline.persist import prior_source_state
 
-    if not failures and not muted and not degraded:
+    prior = prior_source_state(config)
+    # A source that was never attempted this run carries no verdict; comparing it
+    # would report a recovery that did not happen.
+    attempted = [r for r in results if not getattr(r, "skipped", False)]
+
+    newly_broken = [r for r in attempted if not r.ok and prior.get(r.source, True)]
+    recovered = [r for r in attempted if r.ok and not prior.get(r.source, True)]
+
+    if not newly_broken and not recovered:
         return
 
     lines = ["📋 <b>Lead Finder</b>"]
-    lines.append(
-        f"candidates {counters.get('candidates', 0)} · "
-        f"new leads {new_leads} · dupes {counters.get('leads_duplicate', 0)}"
-    )
-    if failures:
+    if newly_broken:
         lines.append("")
-        lines.append("<b>Sources that failed</b>")
-        for r in failures:
-            lines.append(f"  ✗ {esc(r.source)}: {esc(r.error[:160])}")
-    if degraded:
+        lines.append("<b>Started failing</b>")
+        for r in newly_broken:
+            lines.append(f"  ✗ {esc(r.source)}: {esc(r.error[:200])}")
+        # The one failure mode that is fixed with a credit card rather than code,
+        # and the one that killed 85% of lead flow for nineteen days unnoticed.
+        if any("402" in (r.error or "") or "credit" in (r.error or "").lower()
+               for r in newly_broken):
+            lines.append("")
+            lines.append("💳 <b>Out of vendor credits</b> — top up to restore this source.")
+    if recovered:
         lines.append("")
-        lines.append("<b>Partly degraded</b>")
-        for r in degraded:
-            lines.append(f"  ⚠ {esc(r.source)}: {esc(r.error[:160])}")
-    if muted:
-        lines.append("")
-        lines.append(
-            "<b>Muted</b> (failed "
-            f"{config.fail_streak_skip}+ runs running): {esc(', '.join(sorted(muted)))}"
-        )
-        lines.append("<i>Fix the source or drop it from SOURCES_ENABLED.</i>")
+        lines.append("<b>Recovered</b>")
+        for r in recovered:
+            lines.append(f"  ✓ {esc(r.source)}")
 
     send("\n".join(lines), topic="alerts", dry_run=config.dry_run, silent=True)

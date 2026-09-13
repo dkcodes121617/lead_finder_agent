@@ -212,6 +212,11 @@ def record_cursors(config, results: list) -> None:
     try:
         with connect(config.database_url, autocommit=True) as conn, conn.cursor() as cur:
             for result in results:
+                # A source that was never attempted has no verdict to record.
+                # Writing one would reset `fail_streak`, which is the very thing
+                # the mute is keyed on — see SourceResult.skipped.
+                if getattr(result, "skipped", False):
+                    continue
                 cur.execute(
                     """
                     INSERT INTO leadfind.source_cursors
@@ -255,3 +260,22 @@ def muted_sources(config) -> set[str]:
             return {r["source"] for r in cur.fetchall()}
     except Exception:
         return set()
+
+
+def prior_source_state(config) -> dict[str, bool]:
+    """`{source: was_healthy}` as of the last recorded attempt.
+
+    Read by the run summary BEFORE `record_cursors` overwrites it, which is what
+    turns "this source is failing" into "this source has *started* failing".
+    Alerting on state instead of on state-change is what produced roughly 1,400
+    Telegram messages in three weeks and buried the ones that mattered.
+
+    An unknown source is treated as previously healthy, so the first failure
+    after a deploy still speaks.
+    """
+    try:
+        with connect(config.database_url, autocommit=True) as conn, conn.cursor() as cur:
+            cur.execute("SELECT source, last_ok FROM leadfind.source_cursors")
+            return {r["source"]: bool(r["last_ok"]) for r in cur.fetchall()}
+    except Exception:
+        return {}

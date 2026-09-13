@@ -122,6 +122,26 @@ def _to_candidate(place: dict, query: str) -> Candidate | None:
         country=address.rsplit(",", 1)[-1].strip() if "," in address else "",
         # Cold. It has to earn its score from the assessment, not from being found.
         seed_score=None,
+        # ...and the assessment is in the OUTREACH agent, which only ever sees
+        # rows where `is_lead` is true. Sending these through the intent
+        # classifier first meant they never got there: it scores STATED HIRING
+        # INTENT, and a directory listing states none, so it correctly returned
+        # 0 leads from 163 candidates — "business listing for an accounting firm
+        # with no indication of software needs, hiring intent, or business
+        # problems software would solve."
+        #
+        # The result was two funnels that never met. Reddit and HN produce leads
+        # with real intent and no website, so email is impossible; Places and OSM
+        # produce websites with no stated intent, so they were discarded. Of 102
+        # qualified leads, zero had a domain, and the outreach agent sent nothing
+        # in five weeks while 298 assessable domains sat unqualified.
+        #
+        # `presumed_lead` here does not mean "this is a good lead". It means
+        # "the intent classifier is the wrong judge of this one" — the weakness
+        # assessment is, and it is gated by MIN_WEAKNESS_SCORE on the other side.
+        # With no intent_score these also sort last in core.claim_leads() and sit
+        # below NOTIFY_MIN_SCORE, so they never displace or interrupt a real one.
+        presumed_lead=True,
         raw={
             "query": query,
             "address": address,

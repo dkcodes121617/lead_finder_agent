@@ -127,7 +127,7 @@ def drop_already_known(config, candidates: list) -> tuple[list, dict]:
                 "      (SELECT * FROM unnest(%s::text[], %s::text[]))",
                 (sources, uids),
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.warning("could not pre-check known candidates; classifying all", exc_info=True)
         return candidates, {"dup_known": 0}
 

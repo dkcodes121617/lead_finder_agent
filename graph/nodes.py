@@ -136,11 +136,7 @@ def make_source_node(config, name: str, budget: BudgetGuard, retry: dict):
             return time.monotonic() - started > config.source_deadline_seconds
 
         if name in (state.get("muted_sources") or []):
-            return {
-                "source_results": [
-                    SourceResult(source=name, ok=True, error="skipped: muted after repeated failures")
-                ]
-            }
+            return {"source_results": [SourceResult.muted(name)]}
 
         source = REGISTRY[name](config, budget)
         result = SourceResult.failed(name, "never attempted")
