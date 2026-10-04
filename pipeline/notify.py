@@ -55,6 +55,10 @@ def notify_leads(config, rows: list[dict]) -> int:
     # it is for run summaries - this fires only above NOTIFY_MIN_SCORE, which is
     # roughly one message a day, and it is the one message worth opening.
     for row in shown:
+        if row.get("source") == "inbound":
+            send(_enquiry_message(row), topic="leads", dry_run=config.dry_run)
+            continue
+
         score = row.get("intent_score") or 0
         title = esc((row.get("title") or "")[:200])
         url = row.get("url") or ""
@@ -88,6 +92,35 @@ def notify_leads(config, rows: list[dict]) -> int:
     lead_ids = [r["lead_id"] for r in worth_it if r.get("lead_id")]
     _mark_notified(config, lead_ids)
     return len(worth_it)
+
+
+def _enquiry_message(row: dict) -> str:
+    """The alert for someone who wrote to us through the site.
+
+    The thread-reply layout above is wrong for this in every line: there is no
+    thread, the link goes to our own contact page, and the reply is an email.
+    This one leads with who they are and how to reach them, quotes what they
+    actually asked, and gives the drafted email as a tap-to-copy block.
+    Telegram links a bare address by itself, so it is printed plain rather than
+    as a mailto: anchor, which its HTML mode does not accept.
+    """
+    who = esc((row.get("author") or "").strip()[:120]) or "Someone"
+    email = (row.get("email") or "").strip()
+    body = (row.get("body") or "").strip()
+
+    parts = ["📥 <b>New enquiry from the website - reply today</b>", ""]
+    parts.append(f"<b>{who}</b>" + (f" · {esc(row['service_line'])}"
+                                     if row.get("service_line") not in (None, "", "none") else ""))
+    parts.append(esc(email) if email else "<i>No email left - Wico visitor without contact details.</i>")
+    if body:
+        parts += ["", "<b>They wrote:</b>", f"<i>{esc(body[:900])}</i>"]
+    parts.append("")
+    if row.get("reply_angle"):
+        parts.append("<b>Draft reply (edit, then send from hello@):</b>")
+        parts.append(f"<pre>{esc(row['reply_angle'])}</pre>")
+    elif email:
+        parts.append("<i>No draft this time - write back by hand.</i>")
+    return "\n".join(parts).strip()
 
 
 def _mark_notified(config, lead_ids: list[int]) -> None:

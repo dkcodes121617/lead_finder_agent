@@ -145,6 +145,9 @@ class Config:
     # A source that has failed this many times running is skipped and alerted
     # once, instead of alerting every 30 minutes forever.
     fail_streak_skip: int = env_int("FAIL_STREAK_SKIP", 5)
+    # A muted source is still probed once per this many hours, so a fixed cause
+    # (credits topped up, a daily budget reset) brings it back on its own.
+    mute_retry_hours: int = env_int("MUTE_RETRY_HOURS", 6)
     http_timeout: int = env_int("HTTP_TIMEOUT", 25)
 
     def active_sources(self) -> list[str]:

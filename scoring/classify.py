@@ -25,11 +25,17 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 
 from wizcore.llm.client import LLMClient, extract_json
 
-from scoring.prompts import CLASSIFY_SYSTEM, REPLY_ANGLE_SYSTEM, classify_user_prompt
+from scoring.prompts import (
+    CLASSIFY_SYSTEM,
+    INBOUND_REPLY_SYSTEM,
+    REPLY_ANGLE_SYSTEM,
+    classify_user_prompt,
+)
 
 log = logging.getLogger("lead_finder.scoring")
 
@@ -251,6 +257,57 @@ class Classifier:
         except Exception as e:
             log.warning("reply angle failed: %s", e)
             return ""
+
+    def inbound_reply(self, candidate, verdict: Verdict, facts_block: str) -> str:
+        """A draft email answering a website enquiry. '' when there is nobody to send it to.
+
+        A Wico visitor who never left an address has no inbox to reply to, so
+        drafting for them is budget spent on a message that cannot be sent.
+        """
+        if not (candidate.email or "").strip():
+            return ""
+        if self.budget and not self.budget.afford("claude_proxy", 1):
+            return ""
+        try:
+            client = LLMClient(
+                model=self.config.voice_model,
+                on_usage=self.budget.on_llm_usage() if self.budget else None,
+            )
+            text = client.complete(
+                system=INBOUND_REPLY_SYSTEM + "\n\nWizCodes facts you may rely on:\n" + facts_block,
+                user=(
+                    f"Name: {candidate.author or '(not given)'}\n"
+                    f"What they asked about: {candidate.industry or '(not given)'}\n"
+                    f"Their message:\n{candidate.body[:1500]}\n\n"
+                    "Draft the reply email."
+                ),
+                max_tokens=500,
+            )
+            return strip_signoff(text)[:1500]
+        except Exception as e:
+            log.warning("inbound reply draft failed: %s", e)
+            return ""
+
+
+def strip_signoff(text: str) -> str:
+    """Drop a trailing sign-off the model adds despite being told not to.
+
+    Seen on the first live test: the draft ended "Priyank / WizCodes" - a real
+    name taken from the facts, which may not be the person sending the email.
+    A sign-off line is short and has no sentence punctuation; a real closing
+    line ("Which days suit you for a call?") always does.
+    """
+    lines = (text or "").strip().splitlines()
+    while lines:
+        last = lines[-1].strip()
+        if not last:
+            lines.pop()
+            continue
+        if len(last.split()) <= 3 and not re.search(r"[.?!]$", last):
+            lines.pop()
+            continue
+        break
+    return "\n".join(lines).strip()
 
 
 def verdicts_summary(verdicts: list[Verdict]) -> dict:

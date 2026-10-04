@@ -188,6 +188,12 @@ def _insert_lead(cur, candidate, verdict, entity: str, angle: str) -> dict | Non
     lead["business_name"] = candidate.business_name
     lead["source"] = candidate.source
     lead["reply_angle"] = angle
+    # The enquiry alert needs who to write back to and what they asked. Neither
+    # is in the RETURNING row, and re-reading `raw` in notify would be a second
+    # trip for data this function already holds.
+    lead["email"] = candidate.email
+    lead["body"] = candidate.body
+    lead["author"] = candidate.author
     # Only count a lead against the entity when one was actually inserted;
     # incrementing on a conflict would inflate lead_count every single run.
     cur.execute(
@@ -246,16 +252,26 @@ def record_cursors(config, results: list) -> None:
 
 
 def muted_sources(config) -> set[str]:
-    """Sources that have failed `FAIL_STREAK_SKIP` times running.
+    """Sources that have failed `FAIL_STREAK_SKIP` times running, until their next probe.
 
     Skipped and alerted once, rather than alerted every 30 minutes forever —
     which is how an alert channel becomes something nobody reads.
+
+    The mute expires after `MUTE_RETRY_HOURS`. It used to be permanent: a muted
+    source is never attempted, so its cursor never changes, so `fail_streak`
+    stayed above the threshold for good. Places tripped its own *daily* budget
+    five runs in a row on 13 Sep - a limit that resets every day - and was then
+    silenced for three weeks; Reddit would have stayed dark even after its
+    credits were topped up. Now one probe per window either recovers the source
+    (and the run summary says "Recovered") or refreshes `last_run_at` and the mute.
     """
     try:
         with connect(config.database_url, autocommit=True) as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT source FROM leadfind.source_cursors WHERE fail_streak >= %s",
-                (config.fail_streak_skip,),
+                "SELECT source FROM leadfind.source_cursors "
+                "WHERE fail_streak >= %s "
+                "  AND last_run_at > now() - make_interval(hours => %s)",
+                (config.fail_streak_skip, config.mute_retry_hours),
             )
             return {r["source"] for r in cur.fetchall()}
     except Exception:

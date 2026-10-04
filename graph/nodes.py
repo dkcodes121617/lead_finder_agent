@@ -310,7 +310,7 @@ def make_classify(config, budget: BudgetGuard):
 
         verdicts = []
         for index, candidate in enumerate(candidates):
-            if candidate.presumed_lead:
+            if candidate.presumed_lead and candidate.source == "inbound":
                 verdicts.append(
                     Verdict(
                         is_lead=True,
@@ -318,6 +318,24 @@ def make_classify(config, budget: BudgetGuard):
                         service_line=_guess_service_line(candidate),
                         intent_score=candidate.seed_score or 90,
                         reasoning="inbound: self-identified on wizcodes.site",
+                        provider="seeded",
+                    )
+                )
+            elif candidate.presumed_lead:
+                # A directory listing (Places, OSM) states no intent, so it gets
+                # no intent score: NULL sorts last in core.claim_leads() and sits
+                # below NOTIFY_MIN_SCORE, which is the contract sources/base.py
+                # documents. This branch used to share the inbound one above, so
+                # from 13 Sep every restaurant OSM found was stored as a score-90
+                # "self-identified" lead and alerted as one - Applebee's included.
+                verdicts.append(
+                    Verdict(
+                        is_lead=True,
+                        confidence="low",
+                        service_line=_guess_service_line(candidate),
+                        intent_score=candidate.seed_score,
+                        reasoning="directory prospect: no stated intent, "
+                                  "qualified by the site assessment",
                         provider="seeded",
                     )
                 )
@@ -335,7 +353,13 @@ def make_classify(config, budget: BudgetGuard):
             # Only the best few, and only above the threshold. This is the one
             # expensive model call in the agent.
             for index in ranked[: config.notify_max_per_run]:
-                angle = classifier.reply_angle(candidates[index], verdicts[index], facts_block)
+                candidate = candidates[index]
+                if candidate.source == "inbound":
+                    # Someone who wrote to us gets an email back, not a thread
+                    # reply - a different message with a different job.
+                    angle = classifier.inbound_reply(candidate, verdicts[index], facts_block)
+                else:
+                    angle = classifier.reply_angle(candidate, verdicts[index], facts_block)
                 if angle:
                     angles[index] = angle
 
@@ -412,6 +436,9 @@ def make_notify(config):
                     "confidence": v.confidence,
                     "source": c.source,
                     "reply_angle": (state.get("reply_angles") or {}).get(i, ""),
+                    "email": c.email,
+                    "body": c.body,
+                    "author": c.author,
                 }
                 for i, (c, v) in enumerate(
                     zip(state.get("candidates") or [], state.get("verdicts") or [], strict=False)
