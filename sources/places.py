@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 
-from sources.base import Candidate, LeadSource, SourceResult
+from sources.base import Candidate, LeadSource, SourceResult, rotating_slice
 
 log = logging.getLogger("lead_finder.sources.places")
 
@@ -48,9 +48,9 @@ class PlacesSource(LeadSource):
     provider = "places"
 
     def fetch(self, cursor: str = "") -> SourceResult:
-        queries = self.config.discovery_queries
+        queries = rotating_slice(self.config.discovery_pool(), self.config.discovery_per_run)
         if not queries:
-            return SourceResult.failed(self.name, "DISCOVERY_QUERIES is empty")
+            return SourceResult.failed(self.name, "DISCOVERY_QUERIES / DISCOVERY_TRADES are empty")
 
         budget_left = self.config.places_max_calls_per_run
         candidates: list[Candidate] = []

@@ -100,6 +100,14 @@ class Config:
     # places / osm
     google_places_api_key: str = env_str("GOOGLE_PLACES_API_KEY")
     discovery_queries: list[str] = field(default_factory=lambda: env_list("DISCOVERY_QUERIES"))
+    # A fixed search answers with the same top-ranked businesses every time, so
+    # five static queries were exhausted after their first run and Outreach
+    # spent seven weeks re-screening the same ten sites. Trades x cities builds
+    # a pool of hundreds of searches; each run takes the next slice of it (see
+    # sources.base.rotating_slice), so discovery keeps reaching new businesses.
+    discovery_trades: list[str] = field(default_factory=lambda: env_list("DISCOVERY_TRADES"))
+    discovery_cities: list[str] = field(default_factory=lambda: env_list("DISCOVERY_CITIES"))
+    discovery_per_run: int = env_int("DISCOVERY_QUERIES_PER_RUN", 3)
     # §7.2: websiteUri is an Enterprise-tier field and a request bills at the
     # highest tier it touches, so the free ceiling is ~1,000/month, not 10,000.
     # Since the website URL is the entire point of the weak-site pipeline, every
@@ -149,6 +157,26 @@ class Config:
     # (credits topped up, a daily budget reset) brings it back on its own.
     mute_retry_hours: int = env_int("MUTE_RETRY_HOURS", 6)
     http_timeout: int = env_int("HTTP_TIMEOUT", 25)
+
+    def discovery_pool(self) -> list[str]:
+        """Every discovery search: DISCOVERY_QUERIES, then each trade in each city.
+
+        City-major order, so one run's slice is a few trades in one city and the
+        next run moves on. Duplicates are dropped case-insensitively.
+        """
+        pool: list[str] = []
+        seen: set[str] = set()
+        candidates = list(self.discovery_queries) + [
+            f"{trade} in {city}"
+            for city in self.discovery_cities
+            for trade in self.discovery_trades
+        ]
+        for query in candidates:
+            key = query.strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                pool.append(query.strip())
+        return pool
 
     def active_sources(self) -> list[str]:
         """Enabled sources, minus any that are paused, filtered to known ones."""

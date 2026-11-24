@@ -23,7 +23,7 @@ import logging
 import re
 import time
 
-from sources.base import Candidate, LeadSource, SourceResult
+from sources.base import Candidate, LeadSource, SourceResult, rotating_slice
 
 log = logging.getLogger("lead_finder.sources.osm")
 
@@ -88,9 +88,9 @@ class OsmSource(LeadSource):
     provider = ""   # free and unmetered
 
     def fetch(self, cursor: str = "") -> SourceResult:
-        queries = self.config.discovery_queries
+        queries = rotating_slice(self.config.discovery_pool(), self.config.discovery_per_run)
         if not queries:
-            return SourceResult.failed(self.name, "DISCOVERY_QUERIES is empty")
+            return SourceResult.failed(self.name, "DISCOVERY_QUERIES / DISCOVERY_TRADES are empty")
 
         candidates: list[Candidate] = []
         calls = 0

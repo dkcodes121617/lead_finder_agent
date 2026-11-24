@@ -46,6 +46,18 @@ A weak or non-lead looks like:
   - anyone asking for free work, or with an obviously trivial budget
   - other agencies advertising
 
+The most common false lead is a seller dressed as a buyer. If the AUTHOR is \
+the one offering the service, it is not a lead (is_lead false, score under 25), \
+however well the topic matches ours. That covers:
+  - "we built / we automated / here's how we did it for a client" posts, \
+especially ones ending "drop your business", "DM me" or "comment below"
+  - freelancers and agencies describing the work they get hired for
+  - founders recruiting beta users, testers or feedback for their own product
+  - questions about marketing, SEO, ads or getting traffic, with no software \
+to build
+Ask: is this person trying to BUY something built, or trying to SELL \
+something? Only buyers are leads.
+
 The three service lines, written exactly this way and no other way:
   "Web Development"  - websites, web apps, SaaS platforms, dashboards, e-commerce
   "Mobile Apps"      - iOS, Android, cross-platform apps

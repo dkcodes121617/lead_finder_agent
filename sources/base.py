@@ -190,6 +190,26 @@ class LeadSource(ABC):
         return self.budget.afford(self.provider, units, cost)
 
 
+def rotating_slice(
+    items: list[str], per_run: int, period_minutes: int = 30, now: datetime | None = None
+) -> list[str]:
+    """The next `per_run` items for this tick, derived from the clock alone.
+
+    Stateless for the same reason `Config.due_sources` is: two containers agree
+    without coordinating, and there is no cursor to lose. Consecutive ticks take
+    consecutive windows, wrapping at the end, so a pool of N searches is swept
+    once every N / per_run ticks.
+    """
+    if not items or per_run <= 0:
+        return []
+    if len(items) <= per_run:
+        return list(items)
+    now = now or datetime.now(UTC)
+    slot = int(now.timestamp() // (period_minutes * 60))
+    start = (slot * per_run) % len(items)
+    return [items[(start + i) % len(items)] for i in range(per_run)]
+
+
 def to_utc(value) -> datetime | None:
     """Parse the several shapes vendors call a timestamp. None if unparseable.
 
