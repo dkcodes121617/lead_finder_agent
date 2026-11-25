@@ -27,13 +27,48 @@ The rule is structural, not remembered.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 
 from sources.base import Candidate, LeadSource, SourceResult, to_utc
 
 log = logging.getLogger("lead_finder.sources.reddit")
 
-# ~$0.002 per read. Metered, so it goes through the budget guard.
-_COST_PER_READ = 0.002
+# redditapis.com price list (Nov 2026): $0.0015 per read, whatever the page
+# size - so every call asks for the 100-post maximum. Metered, so it goes
+# through the budget guard.
+_COST_PER_READ = 0.0015
+_PAGE = 100
+# The lead finder ticks every 30 minutes; a subreddit is due on the tick its
+# own interval starts.
+_TICK_MINUTES = 30
+
+
+def parse_subreddits(entries: list[str], default_minutes: int) -> list[tuple[str, int]]:
+    """`["SaaS:240", "nocode:720", "shopify"]` -> [(name, minutes), ...]."""
+    out: list[tuple[str, int]] = []
+    for entry in entries:
+        name, _, minutes = entry.strip().partition(":")
+        name = name.strip().removeprefix("r/")
+        if not name:
+            continue
+        out.append((name, int(minutes) if minutes.strip().isdigit() else default_minutes))
+    return out
+
+
+def due_subreddits(entries: list[str], default_minutes: int, now: datetime) -> list[str]:
+    """The subreddits whose own polling interval starts on this tick.
+
+    Measured 24 Nov with 100-post pages: r/SaaS and r/smallbusiness fill one in
+    ~32 hours, r/shopify, r/ecommerce and r/nocode in 11-13 days. Polling all
+    five every two hours bought nothing but repeat pages at $0.0015 each, so a
+    busy subreddit is polled every few hours and a quiet one twice a day. Same
+    stateless clock rule as `Config.due_sources`, so no cursor is needed.
+    """
+    since_midnight = now.hour * 60 + now.minute
+    return [
+        name for name, minutes in parse_subreddits(entries, default_minutes)
+        if since_midnight % max(minutes, _TICK_MINUTES) < _TICK_MINUTES
+    ]
 
 
 class RedditSource(LeadSource):
@@ -48,9 +83,17 @@ class RedditSource(LeadSource):
 
         base = self.config.redditapis_base_url.rstrip("/")
         path = self.config.redditapis_posts_path
-        subreddits = self.config.subreddits
-        if not subreddits:
+        if not self.config.subreddits:
             return SourceResult.failed(self.name, "SUBREDDITS is empty")
+        from zoneinfo import ZoneInfo
+
+        now = datetime.now(ZoneInfo(self.config.display_tz))
+        default = self.config.source_intervals().get("reddit", 120)
+        subreddits = due_subreddits(self.config.subreddits, default, now)
+        if not subreddits:
+            return SourceResult(source=self.name, candidates=[], calls_made=0)
+        oldest = datetime.now(UTC) - timedelta(hours=self.config.reddit_max_age_hours)
+        too_old = 0
 
         candidates: list[Candidate] = []
         calls = 0
@@ -66,7 +109,7 @@ class RedditSource(LeadSource):
                     try:
                         resp = client.get(
                             f"{base}{path}",
-                            params={"subreddit": subreddit, "sort": "new", "limit": 40},
+                            params={"subreddit": subreddit, "sort": "new", "limit": _PAGE},
                         )
                         calls += 1
                         if resp.status_code != 200:
@@ -74,13 +117,20 @@ class RedditSource(LeadSource):
                             continue
                         for post in resp.json().get("posts", []):
                             built = _to_candidate(post, subreddit)
-                            if built:
-                                candidates.append(built)
+                            if not built:
+                                continue
+                            if built.posted_at and built.posted_at < oldest:
+                                too_old += 1
+                                continue
+                            candidates.append(built)
                     except Exception as e:
                         errors.append(f"r/{subreddit}: {e}")
         except Exception as e:
             return SourceResult.failed(self.name, str(e))
 
+        if too_old:
+            log.info("reddit: skipped %d post(s) older than %dh", too_old,
+                     self.config.reddit_max_age_hours)
         if errors and not candidates:
             return SourceResult.failed(self.name, "; ".join(errors[:3]))
         return SourceResult(

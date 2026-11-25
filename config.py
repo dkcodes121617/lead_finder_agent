@@ -81,7 +81,13 @@ class Config:
     redditapis_posts_path: str = env_str("REDDITAPIS_POSTS_PATH", "/api/reddit/posts")
     reddit_backend: str = env_str("REDDIT_BACKEND", "redditapis")
     reddit_user_agent: str = env_str("REDDIT_USER_AGENT", "web:site.wizcodes.leadfinder:v1.0")
+    # `name` or `name:minutes`. Reads are paid per call ($0.0015 at redditapis),
+    # so each subreddit is polled only as often as it fills a 100-post page -
+    # see sources/reddit.py `due_subreddits`.
     subreddits: list[str] = field(default_factory=lambda: env_list("SUBREDDITS", "smallbusiness"))
+    # A thread older than this is not worth a reply, so it is not worth a
+    # classification either. 100-post pages on quiet subreddits reach back ~11 days.
+    reddit_max_age_hours: int = env_int("REDDIT_MAX_AGE_HOURS", 48)
 
     # twitter
     twitterapis_key: str = env_str("TWITTERAPIS_KEY")
