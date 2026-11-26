@@ -28,6 +28,7 @@ from __future__ import annotations
 from datetime import UTC
 
 import modal
+from fastapi import HTTPException, Request
 
 app = modal.App("wizcodes-leadfind")
 
@@ -163,6 +164,43 @@ def manual(dry_run: bool = True, sources: str = "") -> dict:
     if overrides:
         config = dataclasses.replace(config, **overrides)
     return run_once(config)
+
+
+@app.function(image=image, secrets=[secret], timeout=180, retries=0)
+def telegram_handle(update: dict) -> str:
+    """Apply one Telegram update: a command, or drafting the next message."""
+    import logging
+
+    from config import CONFIG
+    from pipeline.assistant import handle_update
+
+    result = handle_update(CONFIG, update)
+    logging.getLogger("lead_finder.modal").warning("telegram update %s: %s",
+                                                   update.get("update_id"), result)
+    return result
+
+
+@app.function(image=image, secrets=[secret], timeout=30)
+@modal.fastapi_endpoint(method="POST")
+async def telegram(request: Request) -> dict:
+    """The bot's webhook. Answers Telegram at once and drafts in the background.
+
+    Telegram retries a webhook that is slow or fails, and drafting takes several
+    seconds, so the work is spawned and the HTTP answer is immediate. The secret
+    header is set by setWebhook(secret_token=TELEGRAM_WEBHOOK_SECRET); anything
+    without it is refused. pipeline/assistant.py also ignores every chat except
+    the owner's.
+    """
+    import hmac
+    import os
+
+    expected = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+    got = request.headers.get("x-telegram-bot-api-secret-token", "")
+    if not expected or not hmac.compare_digest(expected, got):
+        raise HTTPException(status_code=401)
+    update = await request.json()
+    await telegram_handle.spawn.aio(update)
+    return {"ok": True}
 
 
 @app.local_entrypoint()

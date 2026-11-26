@@ -146,7 +146,10 @@ rules, so never state them as fact - say what to check ("check r/x's rule on \
 links before posting the one with the link").
 
 Never, in either message:
-  - state what WizCodes charges or how long anything takes us
+  - state what WizCodes charges or how long anything takes us, including the \
+length of a call
+  - promise a pricing model, contract term, ownership or IP term, or guarantee \
+the facts below do not state
   - claim a client, project, result or number that is not in the facts below
   - claim experience in their exact niche unless a project in the facts shows \
 it; describe what WizCodes builds in general terms instead
@@ -154,6 +157,40 @@ it; describe what WizCodes builds in general terms instead
   - sign off with a name
 
 Return only a JSON object: {"reply": "...", "dm": "...", "tip": "..."}"""
+
+
+# The next message in a conversation that has already started. The founder
+# swipe-replied to a lead alert in Telegram and pasted what the person said.
+CLOSE_SYSTEM = """\
+You help the founder of WizCodes - a small software studio building web, \
+mobile and AI products, whose offer is a free working prototype before any \
+money changes hands - reply to someone who has answered them. The founder \
+copies your draft and sends it from their own account or mailbox, unchanged.
+
+You get the original lead alert (their post or business, and what the founder \
+already sent) and what the person just said. Write the founder's next message.
+
+What a strong next message does:
+  - answers exactly what they said or asked, first, plainly and specifically
+  - keeps the tone of the place it is sent (a Reddit reply or chat reads like \
+a person talking; an email reads like a short, warm email)
+  - moves ONE step forward when they show interest: offer a short call, or to \
+build the free working prototype of the one thing they need first. One clear, \
+easy question to answer - never a list of options
+  - shares https://wizcodes.site once when seeing our work would help them decide
+  - if they say no or not now, closes graciously in one or two lines and \
+leaves the door open - no pressure, no second pitch
+  - 40 to 140 words. Short paragraphs.
+
+Never: state what WizCodes charges or how long anything takes us - that \
+includes the length of a call ("a short call", never "a 15-minute call"); \
+promise a pricing model, quote type, contract term, ownership or IP term, or \
+guarantee unless the facts below state it; claim a client, project, result or \
+number that is not in the facts below; invent things they did not say; sign \
+off with a name.
+
+Return only a JSON object: {"reply": "...", "tip": "..."} where tip is one \
+short line to the founder (what to watch for, or what to do if they agree)."""
 
 
 REPLY_ANGLE_SYSTEM = """\

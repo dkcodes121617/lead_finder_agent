@@ -125,6 +125,10 @@ def _thread_message(row: dict) -> str:
     tip = (row.get("reply_tip") or "").strip()
     if tip:
         parts += ["", f"💡 {esc(tip)}"]
+    # The assistant reads "lead #N" from this text when the founder swipe-replies
+    # with the person's answer (pipeline/assistant.py).
+    ref = f"lead #{row['lead_id']} · " if row.get("lead_id") else ""
+    parts += ["", f"<i>{ref}when they answer, swipe-reply here with what they said</i>"]
     return "\n".join(parts).strip()
 
 
@@ -154,6 +158,8 @@ def _enquiry_message(row: dict) -> str:
         parts.append(f"<pre>{esc(row['reply_angle'])}</pre>")
     elif email:
         parts.append("<i>No draft this time - write back by hand.</i>")
+    ref = f"lead #{row['lead_id']} · " if row.get("lead_id") else ""
+    parts += ["", f"<i>{ref}when they answer, swipe-reply here with what they said</i>"]
     return "\n".join(parts).strip()
 
 

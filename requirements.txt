@@ -58,3 +58,5 @@ tenacity>=9.0.0
 # ── Deploy + lint tooling ──
 modal>=0.73.82
 ruff>=0.8.0
+# The Telegram assistant's webhook (modal.fastapi_endpoint).
+fastapi[standard]>=0.115
