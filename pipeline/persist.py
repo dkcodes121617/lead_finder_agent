@@ -44,7 +44,7 @@ def region_tier(country: str) -> str:
     return "us_eu_priority" if (country or "").strip().lower() in _PRIORITY else "other"
 
 
-def persist(config, candidates: list, verdicts: list, angles: dict[int, str]) -> dict:
+def persist(config, candidates: list, verdicts: list, angles: dict) -> dict:
     """Write entities and leads, mark inbound rows, return counters.
 
     `angles` maps candidate index -> reply angle, for the few that earned one.
@@ -71,9 +71,17 @@ def persist(config, candidates: list, verdicts: list, angles: dict[int, str]) ->
             if _upsert_entity(cur, candidate, entity):
                 counters["entities_new"] += 1
 
+            # A thread lead's draft is {reply, dm, tip}; the column (and the
+            # portal's copy button) keeps the reply, the alert gets all three.
+            drafted = angles.get(index) or ""
+            extras = drafted if isinstance(drafted, dict) else {}
             lead = _insert_lead(
-                cur, candidate, verdicts[index], entity, angles.get(index) or ""
+                cur, candidate, verdicts[index], entity,
+                extras.get("reply", "") if extras else drafted,
             )
+            if lead is not None and extras:
+                lead["reply_dm"] = extras.get("dm", "")
+                lead["reply_tip"] = extras.get("tip", "")
             if lead is None:
                 counters["leads_duplicate"] += 1
             else:

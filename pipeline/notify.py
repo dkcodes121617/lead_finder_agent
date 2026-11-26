@@ -59,28 +59,7 @@ def notify_leads(config, rows: list[dict]) -> int:
             send(_enquiry_message(row), topic="leads", dry_run=config.dry_run)
             continue
 
-        score = row.get("intent_score") or 0
-        title = esc((row.get("title") or "")[:200])
-        url = row.get("url") or ""
-
-        meta = f"<b>{score}</b> · {esc(row.get('source', ''))}"
-        if row.get("service_line") and row["service_line"] != "none":
-            meta += f" · {esc(row['service_line'])}"
-        if row.get("confidence"):
-            meta += f" · {esc(row['confidence'])} confidence"
-
-        parts = ["🎯 <b>Lead needs your reply</b>", "", meta, title, ""]
-        if url:
-            parts.append(f'👉 <a href="{esc(url)}">Open the thread and reply</a>')
-            parts.append("")
-        if row.get("reply_angle"):
-            # Written by the agent, sent by a human. Tap and hold to copy.
-            parts.append("<b>Send this:</b>")
-            parts.append(f"<pre>{esc(row['reply_angle'])}</pre>")
-        else:
-            parts.append("<i>No draft reply - read the thread and write one.</i>")
-
-        send("\n".join(parts).strip(), topic="leads", dry_run=config.dry_run)
+        send(_thread_message(row), topic="leads", dry_run=config.dry_run)
 
     if len(worth_it) > len(shown):
         send(
@@ -92,6 +71,61 @@ def notify_leads(config, rows: list[dict]) -> int:
     lead_ids = [r["lead_id"] for r in worth_it if r.get("lead_id")]
     _mark_notified(config, lead_ids)
     return len(worth_it)
+
+
+_PLACE = {"reddit": "Reddit", "hackernews": "Hacker News", "stackexchange": "Stack Exchange"}
+
+
+def _thread_message(row: dict) -> str:
+    """One lead, ready to act on with one thumb: open, tap the box, paste.
+
+    The reply is complete, not an opening line - the owner should be able to
+    paste it unchanged. Each pasteable text sits alone in its own <pre> block,
+    which Telegram copies in one tap on mobile, and nothing else is inside it.
+    """
+    from scoring.classify import subreddit_of
+
+    source = row.get("source", "")
+    url = row.get("url") or ""
+    sub = subreddit_of(url) if source == "reddit" else ""
+    where = f"r/{sub}" if sub else _PLACE.get(source, source)
+
+    meta = [f"score <b>{row.get('intent_score') or 0}</b>"]
+    if row.get("service_line") and row["service_line"] != "none":
+        meta.append(esc(row["service_line"]))
+
+    parts = [f"🎯 <b>New lead · {esc(where)}</b>", " · ".join(meta), ""]
+    parts.append(f"<b>{esc((row.get('title') or '')[:200])}</b>")
+    body = " ".join((row.get("body") or row.get("body_snippet") or "").split())
+    if body:
+        parts.append(f"<i>{esc(body[:280])}{'…' if len(body) > 280 else ''}</i>")
+    parts.append("")
+    if url:
+        parts.append(f'👉 <a href="{esc(url)}">Open the post</a>')
+        parts.append("")
+
+    reply = (row.get("reply_angle") or "").strip()
+    if reply:
+        parts.append("<b>1 · Reply in the thread</b> - tap the box to copy")
+        parts.append(f"<pre>{esc(reply)}</pre>")
+    else:
+        parts.append("<i>No draft this time - read the post and reply by hand.</i>")
+
+    dm = (row.get("reply_dm") or "").strip()
+    if dm:
+        author = (row.get("author") or "").strip()
+        parts.append("")
+        if source == "reddit" and author and author.lower() not in ("[deleted]", "deleted"):
+            link = f"https://www.reddit.com/message/compose/?to={author}"
+            parts.append(f'<b>2 · Then message them</b> - <a href="{esc(link)}">open a DM to u/{esc(author)}</a>')
+        else:
+            parts.append("<b>2 · Then message them directly</b>")
+        parts.append(f"<pre>{esc(dm)}</pre>")
+
+    tip = (row.get("reply_tip") or "").strip()
+    if tip:
+        parts += ["", f"💡 {esc(tip)}"]
+    return "\n".join(parts).strip()
 
 
 def _enquiry_message(row: dict) -> str:

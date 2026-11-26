@@ -33,7 +33,7 @@ from wizcore.llm.client import LLMClient, extract_json
 from scoring.prompts import (
     CLASSIFY_SYSTEM,
     INBOUND_REPLY_SYSTEM,
-    REPLY_ANGLE_SYSTEM,
+    REPLY_SYSTEM,
     classify_user_prompt,
 )
 
@@ -225,38 +225,48 @@ class Classifier:
             out.append((Verdict.unclassified("model omitted this item"), index))
         return out
 
-    # ── reply angle, high-confidence leads only ──
-    def reply_angle(self, candidate, verdict: Verdict, facts_block: str) -> str:
-        """One or two sentences to open a reply with. '' when it is not worth it.
+    # ── ready-to-paste reply, for every lead worth an alert ──
+    def reply_angle(self, candidate, verdict: Verdict, facts_block: str) -> dict:
+        """A complete reply (plus a DM and a tip) to paste. {} when not worth it.
 
-        Gated on score because this is the only call here that uses the
-        expensive model, and a reply angle for a lead nobody will contact is
-        budget spent on nothing.
+        Returns {"reply": str, "dm": str, "tip": str}. Gated on score because
+        this is the expensive model, and a draft for a lead nobody is alerted
+        about is budget spent on nothing.
         """
         if (verdict.intent_score or 0) < self.config.reply_angle_min_score:
-            return ""
+            return {}
         if self.budget and not self.budget.afford("claude_proxy", 1):
-            return ""
+            return {}
         try:
             client = LLMClient(
                 model=self.config.voice_model,
                 on_usage=self.budget.on_llm_usage() if self.budget else None,
             )
-            text = client.complete(
-                system=REPLY_ANGLE_SYSTEM + "\n\nWizCodes facts you may rely on:\n" + facts_block,
+            raw = client.complete(
+                system=REPLY_SYSTEM + "\n\nWizCodes facts you may rely on:\n" + facts_block,
                 user=(
-                    f"This person posted on {candidate.source}:\n\n"
+                    f"Posted on {_where(candidate)} by {candidate.author or 'someone'}:\n\n"
                     f"title: {candidate.title}\n"
-                    f"text: {candidate.text_for_classifier(800)}\n\n"
-                    "Write the opening sentences of a reply to them."
+                    f"text: {candidate.text_for_classifier(2500)}\n\n"
+                    "Draft the reply, the DM if it fits, and the tip."
                 ),
-                max_tokens=200,
+                max_tokens=1200,
                 temperature=0.7,
             )
-            return text.strip()[:600]
         except Exception as e:
-            log.warning("reply angle failed: %s", e)
-            return ""
+            log.warning("reply draft failed: %s", e)
+            return {}
+        parsed = extract_json(raw)
+        if not isinstance(parsed, dict) or not str(parsed.get("reply") or "").strip():
+            # A model that ignored the JSON shape still usually wrote a usable
+            # reply; sending that beats sending nothing.
+            text = strip_signoff(raw or "")
+            return {"reply": text[:2500], "dm": "", "tip": ""} if text else {}
+        return {
+            "reply": strip_signoff(str(parsed.get("reply") or ""))[:2500],
+            "dm": strip_signoff(str(parsed.get("dm") or ""))[:1200],
+            "tip": str(parsed.get("tip") or "").strip()[:300],
+        }
 
     def inbound_reply(self, candidate, verdict: Verdict, facts_block: str) -> str:
         """A draft email answering a website enquiry. '' when there is nobody to send it to.
@@ -287,6 +297,23 @@ class Classifier:
         except Exception as e:
             log.warning("inbound reply draft failed: %s", e)
             return ""
+
+
+def subreddit_of(url: str) -> str:
+    m = re.search(r"reddit\.com/r/([A-Za-z0-9_]+)", url or "")
+    return m.group(1) if m else ""
+
+
+def _where(candidate) -> str:
+    """Where the post lives, in the words that change how a reply should read."""
+    if candidate.source == "reddit":
+        sub = subreddit_of(candidate.url)
+        return f"Reddit, r/{sub}" if sub else "Reddit"
+    if candidate.source == "hackernews":
+        return "Hacker News"
+    if candidate.source == "stackexchange":
+        return f"Stack Exchange ({candidate.raw.get('site') or 'Q&A'})"
+    return candidate.source
 
 
 def strip_signoff(text: str) -> str:

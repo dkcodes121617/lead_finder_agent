@@ -25,7 +25,8 @@ class LeadFinderState(TypedDict, total=False):
     # Written by exactly one node each.
     candidates: list[Any]
     verdicts: list[Any]
-    reply_angles: dict[int, str]
+    # index -> reply text, or {reply, dm, tip} for thread leads
+    reply_angles: dict[int, Any]
     facts_block: str
     muted_sources: list[str]
     counters: dict[str, Any]

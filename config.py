@@ -136,7 +136,8 @@ class Config:
     # model that invented no figures in the bench.
     voice_model: str = env_str("ANTHROPIC_VOICE_MODEL", "claude-opus-4-8")
     classify_batch_size: int = env_int("CLASSIFY_BATCH_SIZE", 12)
-    reply_angle_min_score: int = env_int("REPLY_ANGLE_MIN_SCORE", 70)
+    # Every alerted lead gets a full draft, so this follows NOTIFY_MIN_SCORE.
+    reply_angle_min_score: int = env_int("REPLY_ANGLE_MIN_SCORE", 55)
 
     # ── notification ──
     notify_min_score: int = env_int("NOTIFY_MIN_SCORE", 55)

@@ -435,7 +435,7 @@ def make_notify(config):
                     "service_line": v.service_line,
                     "confidence": v.confidence,
                     "source": c.source,
-                    "reply_angle": (state.get("reply_angles") or {}).get(i, ""),
+                    **_draft_fields((state.get("reply_angles") or {}).get(i, "")),
                     "email": c.email,
                     "body": c.body,
                     "author": c.author,
@@ -455,6 +455,14 @@ def make_notify(config):
         return {"notified": notified, "counters": counters}
 
     return notify
+
+
+def _draft_fields(drafted) -> dict:
+    """A drafted reply in the row shape notify reads, from either draft form."""
+    if isinstance(drafted, dict):
+        return {"reply_angle": drafted.get("reply", ""),
+                "reply_dm": drafted.get("dm", ""), "reply_tip": drafted.get("tip", "")}
+    return {"reply_angle": drafted or ""}
 
 
 def alert_failure(config, exc: BaseException, run_id: str) -> None:
